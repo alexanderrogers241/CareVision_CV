@@ -88,7 +88,8 @@ int main( int argc, char** argv )
     void *z_buff = malloc(sizeof(char) *1);
     unsigned char *z_buff_type;
     // pressure sensor data
-    std::array<unsigned int, 32> data {};
+    std::array<unsigned int, 32> data {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,
+										19,20,21,22,23,24,25,26,27,28,29,30,31};
     // place 'w' into the y_buff and same for z_buff
     memcpy(y_buff,&handshake_start,sizeof(unsigned char));
    
@@ -101,15 +102,15 @@ int main( int argc, char** argv )
 	// Connection to serial port
     char errorOpening = serial.openDevice(SERIAL_PORT, 115200);
     // If connection fails, return the error code otherwise, display a success message
-    if (errorOpening!=1) 
-	{
-		std::cout << "error\n";
-		return errorOpening;
-	}
-	else
-	{
-    	printf ("Successful connection to %s\n",SERIAL_PORT);
-	}
+    // if (errorOpening!=1) 
+	// {
+	// 	std::cout << "error\n";
+	// 	return errorOpening;
+	// }
+	// else
+	// {
+    // 	printf ("Successful connection to %s\n",SERIAL_PORT);
+	// }
     
 	/*
 	 * parse command line
@@ -130,7 +131,13 @@ int main( int argc, char** argv )
 	/*
 	 * create input stream
 	 */
-	videoSource* input = videoSource::Create(cmdLine, ARG_POSITION(0));
+	// posenet --input-width=640 --input-height=480 --input-flip=counterclockwise csi://0
+	videoOptions camsettings{};
+	camsettings.flipMethod = videoOptions::FlipMethod::FLIP_COUNTERCLOCKWISE;
+	camsettings.height = 480; // for some reason this is the width
+	camsettings.width = 640;
+	const char *str1 = "csi://0";
+	videoSource* input = videoSource::Create(str1,camsettings);
 
 	if( !input )
 	{
@@ -193,15 +200,15 @@ int main( int argc, char** argv )
 		LogInfo("\n posenet: detected %zu %s(s)\n", poses.size(), net->GetCategory());
 		// gather pressure sensor data
 		//handshake is the char w = ascii = 0x77
-    	serial.writeBytes(y_buff,1);
-		serial.readBytes(x_buff,32,10);
-		x_buff_type = (unsigned char*) x_buff;
+    	// serial.writeBytes(y_buff,1);
+		// serial.readBytes(x_buff,32,10);
+		// x_buff_type = (unsigned char*) x_buff;
 		puts("\n Buffer dump:");
 		// convert to a vector
     	for(int y=0; y<(int)sizeof(char)*32; y++ )
     	{
-			data[y] = ( *(x_buff_type+y));
-			printf(" %02X",*(x_buff_type+y));
+			// data[y] = ( *(x_buff_type+y));
+			// printf(" %02X",*(x_buff_type+y));
 			
 			// if(y < 17)
 			// {
@@ -281,6 +288,15 @@ int main( int argc, char** argv )
 			
 			
     	}
+		puts("\n Coord dump:");
+		if (poses.size()>0)
+		{
+			float coord_x = poses[0].Keypoints[0].x;
+			float coord_y = poses[0].Keypoints[0].y;
+			printf("Nose Coord: %4.1f,%4.1f",coord_x,coord_y);
+
+		}
+
 		puts("\n Array dump:");
 		for(int y=0; y<(int)sizeof(char)*32; y++ )
 		{
