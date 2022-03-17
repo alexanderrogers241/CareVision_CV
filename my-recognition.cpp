@@ -331,10 +331,10 @@ int main( int argc, char** argv )
 									   5,5,5,5,
 									   5,5,5,5,
 									   5,5,5,5,
-									   20,20,20,20,
-									   20,20,20,20,
-									   20,20,20,20,
-									   20,20,20,20};
+									   22,22,22,22,
+									   22,22,22,22,
+									   22,22,22,22,
+									   22,22,22,22};
 
     // place 'w' into the y_buff and same for z_buff
     memcpy(y_buff,&handshake_start,sizeof(unsigned char));
@@ -485,28 +485,29 @@ int main( int argc, char** argv )
 		} else {
 			// fault below
 			for (auto it =poses[0].Keypoints.begin(); it!= poses[0].Keypoints.end(); ++it) {
-
+				// out index
 				int i{0};
-				int j{std::distance(poses[0].Keypoints.begin(), it)};
 				pt temp_pt {it->x,it->y};
-				// i returns index to pressure sensor data 0-21 lbs
+				// i returns index to pressure sensor data 0-21 lbs	
+						
 				if(PointToPressBox(temp_pt,i))
 				{
-					std::cout<<"pressure sensor index: " << i <<"\n";
-
-					// if (data[i] > 20)
-					// {
-					// 	// j returns the coresponding keypoint
-					// net->SetKeypointColor(j, color_red_test);
-					// }
-					// else if (data[i] < 20 && data[i] >= 10)
-					// {
-					// net->SetKeypointColor(j, color_yellow_test);
-					// }
-					// else
-					// {
-					// net->SetKeypointColor(j, color_green_test);	
-					// }
+				
+					if (data[i] > 20)
+					{
+						// j returns the coresponding keypoint
+						
+					net->SetKeypointColor(it->ID, color_red_test);
+					//std::cout << "RED Key: " << j <<" Sense#: " << i <<" Press: " << data[i] <<"\n";
+					}
+					else if (data[i] < 20 && data[i] >= 10)
+					{
+					net->SetKeypointColor(it->ID, color_yellow_test);
+					}
+					else
+					{
+					net->SetKeypointColor(it->ID, color_green_test);	
+					}
 				}
 			}
 		}
