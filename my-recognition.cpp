@@ -1,6 +1,8 @@
 #include <jetson-inference/poseNet.h>
 #include <jetson-utils/videoSource.h>
 #include <jetson-utils/videoOutput.h>
+#include <jetson-utils/cudaDraw.h>
+#include <jetson-utils/imageIO.h>
 #include <signal.h>
 #include <cstdint>
 // Serial library
@@ -8,6 +10,8 @@
 #include <unistd.h>
 #include <stdio.h>
 // sudo chmod 666 /dev/ttyACM0
+
+
 #if defined (_WIN32) || defined(_WIN64)
     //for serial ports above "COM9", we must use this extended syntax of "\\.\COMx".
     //also works for COM0 to COM9.
@@ -45,6 +49,195 @@
 
  */
 
+
+// below array is a temprary test replaced with data[]
+
+std::array<std::array<int, 2>, 1> TOPL = { {40, 25 } };
+std::array<std::array<int, 2>, 1> BOTR = { {440, 615} };
+int WIDTH = BOTR[0][0] - TOPL[0][0];
+int HEIGHT = BOTR[0][1] - TOPL[0][1];
+
+//#
+//#                         Pressure sensor array
+//#
+//#                        4X                    4X
+//#               TL * -------------|  TL * -------------|
+//#                  |  31 30 29 28 |     |  31 30 29 28 |
+//#                  |  27 26 25 24 |     |  27 26 25 24 |
+//#                  |  23 22 21 20 |     |  23 22 21 20 |
+//#                  |  19 18 17 16 |     |  19 18 17 16 |
+//#               8X |  15 14 13 12 |  8X |  15 14 13 12 |
+//#                  |  11 10 9  8  |     |  11 10  9  8 |
+//#                  |  7  6  5  4  |     |   7  6  5  4 |
+//#                  |  3  2  1  0  |     |   3  2  1  0 |
+//#                  |  _  _  _  _  * BR  |  _  _  _  _  * BR 
+//#
+//#                    PSA layout #       PSA boxes index #
+
+int HEIGHT_SPACE = int(HEIGHT / 8);
+int WIDTH_SPACE = int(WIDTH / 4);
+typedef std::array<std::array<int, 2>, 1> pt;
+typedef std::array<std::array<int, 2>, 2> two_pts;
+std::vector<two_pts> PSA_boxes;
+float4 color_red_test{252,0,0,252};
+float4 color_green_test{0,252,0,252};
+float4 color_yellow_test{252,252,0,252};
+
+void drawx(pt& point, uchar3* frame)
+{
+    int spaceing{ 10 };
+	CUDA(cudaDrawLine(frame, 480, 640, point[0][0] + spaceing, point[0][1],  point[0][0] - spaceing, point[0][1], make_float4(255,0,200,200), 10));
+	CUDA(cudaDrawLine(frame, 480, 640, point[0][0], point[0][1] + spaceing,  point[0][0], point[0][1] + spaceing, make_float4(255,0,200,200), 10));
+}
+
+void drawPSA(uchar3* frame)
+{
+	int i{0};
+
+	for(const auto& box : PSA_boxes) 
+	{  
+		if(i%3==0)
+		{
+		CUDA(cudaDrawRect(frame, 480, 640, box[0][0], box[0][1], box[1][0], box[1][1], make_float4(0,0,255,20))); 
+		}
+		else if(i%3 == 1)
+		{
+		CUDA(cudaDrawRect(frame, 480, 640, box[0][0], box[0][1], box[1][0], box[1][1], make_float4(0,255,255,20)));	
+		}
+		else
+		{
+		CUDA(cudaDrawRect(frame, 480, 640, box[0][0], box[0][1], box[1][0], box[1][1], make_float4(255,255,255,20)));
+		}
+       
+
+	   i++;
+    }
+}
+
+bool InsidePSA(std::array<std::array<int, 2>, 2>& box, std::array<std::array<int, 2>, 1>& point)
+{
+    // points start on the top right corner and traverse clockwise
+    pt p1 = { TOPL[0] };
+    pt p2 = { TOPL[0][0] + 4 * WIDTH_SPACE, TOPL[0][1] };
+    pt p3 = { BOTR[0] };
+    pt p4 = { BOTR[0][0] - 4 * WIDTH_SPACE, BOTR[0][1] };
+
+    // point is plugged into 4 line equations that make up rectangle
+    // if the line equation f(x,y) > 0 point is to the right of vector
+    // if f(x,y) < 0 point is  to the left of vector
+    // if f(x,y) == 0 point is on the line
+    // traversing clockwise
+    // d1 = p1------------------------------------------>p2
+    int d1 = (p1[0][1] - p2[0][1]) * point[0][0] + (p2[0][0] - p1[0][0]) * point[0][1] + p1[0][0] * p2[0][1] - p2[0][0] * p1[0][1];
+    // d2 = p2
+    //       |
+    //       V
+    //      p3
+    int d2 = (p2[0][1] - p3[0][1]) * point[0][0] + (p3[0][0] - p2[0][0]) * point[0][1] + p2[0][0] * p3[0][1] - p3[0][0] * p2[0][1];
+    // d3 = p4<------------------------------------------p3
+    int d3 = (p3[0][1] - p4[0][1]) * point[0][0] + (p4[0][0] - p3[0][0]) * point[0][1] + p3[0][0] * p4[0][1] - p4[0][0] * p3[0][1];
+    // d4 = p1
+    //       ^
+    //       |
+    //      p4
+    int d4 = (p4[0][1] - p1[0][1]) * point[0][0] + (p1[0][0] - p4[0][0]) * point[0][1] + p4[0][0] * p1[0][1] - p1[0][0] * p4[0][1];
+
+    if (d1 < 0)
+    {
+        // above line d1
+        return false;
+    }
+    if (d2 <= 0)
+    {
+        // right and including line d2
+        return false;
+    }
+    if (d3 <= 0)
+    {
+        // below including line d3
+        return false;
+    }
+    if (d4 < 0)
+    {
+        // left of line d2
+        return false;
+    }
+
+    // if passes previous tests point is inside box
+    return true;
+}
+
+bool InsideBox(std::array<std::array<int, 2>, 2> box, std::array<std::array<int,2>,1> point)
+{
+    if (InsidePSA(box, point) == false) return false;
+    // points start on the top right corner and traverse clockwise
+    pt p1 = {box[0]};
+    pt p2 = {box[0][0] + WIDTH_SPACE, box[0][1]};
+    pt p3= {box[1]};
+    pt p4 = {box[1][0] - WIDTH_SPACE, box[1][1]};
+
+    // point is plugged into 4 line equations that make up rectangle
+    // if the line equation f(x,y) > 0 point is to the right of vector
+    // if f(x,y) < 0 point is  to the left of vector
+    // if f(x,y) == 0 point is on the line
+    // traversing clockwise
+    // d1 = p1------------------------------------------>p2
+    int d1 = (p1[0][1] - p2[0][1]) * point[0][0] + (p2[0][0] - p1[0][0]) * point[0][1] + p1[0][0] * p2[0][1] - p2[0][0] * p1[0][1];
+    // d2 = p2
+    //       |
+    //       V
+    //      p3
+    int d2 = (p2[0][1] - p3[0][1]) * point[0][0] + (p3[0][0] - p2[0][0]) * point[0][1] + p2[0][0] * p3[0][1] - p3[0][0] * p2[0][1];
+    // d3 = p4<------------------------------------------p3
+    int d3 = (p3[0][1] - p4[0][1]) * point[0][0] + (p4[0][0] - p3[0][0]) * point[0][1] + p3[0][0] * p4[0][1] - p4[0][0] * p3[0][1];
+    // d4 = p1
+    //       ^
+    //       |
+    //      p4
+    int d4 = (p4[0][1] - p1[0][1]) * point[0][0] + (p1[0][0] - p4[0][0]) * point[0][1] + p4[0][0] * p1[0][1] - p1[0][0] * p4[0][1];
+
+    if (d1 < 0)
+    {
+        // above line d1
+        return false;
+    }
+    if (d2 <= 0)
+    {
+        // right and including line d2
+        return false;
+    }
+    if (d3 <= 0)
+    {
+        // below including line d3
+        return false;
+    }
+    if (d4 < 0)
+    {
+        // left of line d2
+        return false;
+    }
+
+    // if passes previous tests point is inside box
+    return true;
+}
+
+bool PointToPressBox(pt& point, int& out_index)
+{
+
+    for (int i = 0; i < PSA_boxes.size(); i++) {
+        if (InsideBox(PSA_boxes[i], point))
+        {
+            // returns index 0 - 31 to represent which pressure sensor the point is over
+            out_index = i;
+            return true;
+        }
+        
+    }
+    // return 101 value which means point is on edge of PSA box for a respective pressure sensor. Some edges while inside the PSA box are technically by edge case
+    // outside of the smaller box for each pressure sensor
+    return false;
+}
+
 bool signal_recieved = false;
 
 void sig_handler(int signo)
@@ -74,11 +267,57 @@ int usage()
 	return 0;
 }
 
+void setup()
+{
+	std::array<std::array<int, 2>, 1> BOX_TOPL = { {int(BOTR[0][0] - WIDTH_SPACE), int(BOTR[0][1] - HEIGHT_SPACE) } };
+	std::array<std::array<int, 2>, 1> BOX_BOTR = { {BOTR[0][0], BOTR[0][1] } };
+        
+        for (int i{ 1 }; i < 9; i++)
+        {
+            for (int j{ 1 }; j < 5; j++)
+            {
+                // store box coord in list
+                std::array<std::array<int, 2>, 2> BOX;
+                BOX[0][0] = BOX_TOPL[0][0];
+                BOX[0][1] = BOX_TOPL[0][1];
+                BOX[1][0] = BOX_BOTR[0][0];
+                BOX[1][1] = BOX_BOTR[0][1];
+                PSA_boxes.push_back(BOX);
+				
+                // // draw box
+                // cv::rectangle(frame,
+                //     cv::Point(BOX_TOPL[0][0], BOX_TOPL[0][1]),
+                //     cv::Point(BOX_BOTR[0][0], BOX_BOTR[0][1]),
+                //     cv::Scalar(0, 0, 255),
+                //     2,
+                //     cv::LINE_8);
+
+                // Move Box X <---
+                BOX_TOPL[0][0] = BOX_TOPL[0][0] - WIDTH_SPACE;
+                BOX_BOTR[0][0] = BOX_BOTR[0][0] - WIDTH_SPACE;
+            }
+            // Move Box Y up
+            BOX_BOTR[0][1] = BOX_BOTR[0][1] - HEIGHT_SPACE;
+            BOX_TOPL[0][1] = BOX_TOPL[0][1] - HEIGHT_SPACE;
+            // Reset Box X coord
+            BOX_TOPL[0][0] = BOX_TOPL[0][0] + (4 * WIDTH_SPACE);
+            BOX_BOTR[0][0] = BOX_BOTR[0][0] + (4 * WIDTH_SPACE);
+        }
+
+
+
+
+}
+
 int main( int argc, char** argv )
 {
-	float4 color_red_test{252,0,0,252};
-	float4 color_green_test{0,252,0,252};
-	float4 color_yellow_test{252,252,0,252};
+	
+
+
+
+
+	setup();
+
 	// Serial object
     serialib serial;
 	void *x_buff = malloc(sizeof(char) * 32);
@@ -88,8 +327,15 @@ int main( int argc, char** argv )
     void *z_buff = malloc(sizeof(char) *1);
     unsigned char *z_buff_type;
     // pressure sensor data
-    std::array<unsigned int, 32> data {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,
-										19,20,21,22,23,24,25,26,27,28,29,30,31};
+    std::array<unsigned int, 32> data {5,5,5,5,
+									   5,5,5,5,
+									   5,5,5,5,
+									   5,5,5,5,
+									   20,20,20,20,
+									   20,20,20,20,
+									   20,20,20,20,
+									   20,20,20,20};
+
     // place 'w' into the y_buff and same for z_buff
     memcpy(y_buff,&handshake_start,sizeof(unsigned char));
    
@@ -198,135 +444,78 @@ int main( int argc, char** argv )
 		}
 		
 		LogInfo("\n posenet: detected %zu %s(s)\n", poses.size(), net->GetCategory());
+
 		// gather pressure sensor data
 		//handshake is the char w = ascii = 0x77
     	// serial.writeBytes(y_buff,1);
 		// serial.readBytes(x_buff,32,10);
 		// x_buff_type = (unsigned char*) x_buff;
-		puts("\n Buffer dump:");
-		// convert to a vector
-    	for(int y=0; y<(int)sizeof(char)*32; y++ )
-    	{
-			// data[y] = ( *(x_buff_type+y));
-			// printf(" %02X",*(x_buff_type+y));
-			
-			// if(y < 17)
-			// {
-			// 	switch (data[y])
-			// 	{
-			// 	case 0:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 1:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 2:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 3:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 4:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 5:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 6:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 7:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 8:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 9:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			// 	case 10:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 11:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 12:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 13:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 14:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 15:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 16:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 17:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 18:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 19:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 20:
-			// 		net->SetKeypointColor(y, color_yellow_test);
-			// 	break;
-			// 	case 21:
-			// 		net->SetKeypointColor(y, color_green_test);
-			// 	break;
-			// 	default:
-			// 		net->SetKeypointColor(y, color_red_test);
-			// 	break;
-			//	}
-			//}
-			
-			
-    	}
-		puts("\n Coord dump:");
-		if (poses.size()>0)
-		{
-			float coord_x = poses[0].Keypoints[0].x;
-			float coord_y = poses[0].Keypoints[0].y;
-			printf("Nose Coord: %4.1f,%4.1f",coord_x,coord_y);
 
-		}
+		puts("\n Buffer dump:");
+
+		// transfer pressure sensor serial datat to a to an array
+    	// for(int y=0; y<(int)sizeof(char)*32; y++ )
+    	// {
+		// 	data[y] = ( *(x_buff_type+y));
+		// 	printf(" %02X",*(x_buff_type+y));
+    	// }
+
+
+		// puts("\n Coord dump:");
+		// if (poses.size()>0)
+		// {
+		// 	float coord_x = poses[0].Keypoints[0].x;
+		// 	float coord_y = poses[0].Keypoints[0].y;
+		// 	printf("Nose Coord: %4.1f,%4.1f",coord_x,coord_y);
+
+		// }
 
 		puts("\n Array dump:");
 		for(int y=0; y<(int)sizeof(char)*32; y++ )
 		{
 			printf(" %02u",data[y]);
 		}
-		for(int y=0; y<(int)sizeof(char)*32; y++ )
+
+		// paint each keypoint a color
+		// color represents pressure
+		// copy to try to avoid a memory fault
+		if(poses.empty() || poses[0].Keypoints.empty())
 		{
-			if (y <18)
-			{	
-				if (data[y] > 20)
+			
+		} else {
+			// fault below
+			for (auto it =poses[0].Keypoints.begin(); it!= poses[0].Keypoints.end(); ++it) {
+
+				int i{0};
+				int j{std::distance(poses[0].Keypoints.begin(), it)};
+				pt temp_pt {it->x,it->y};
+				// i returns index to pressure sensor data 0-21 lbs
+				if(PointToPressBox(temp_pt,i))
 				{
-				net->SetKeypointColor(y, color_red_test);
-				}
-				else if (data[y] < 20 && data[y] >= 10)
-				{
-				net->SetKeypointColor(y, color_yellow_test);
-				}
-				else
-				{
-				net->SetKeypointColor(y, color_green_test);	
+					std::cout<<"pressure sensor index: " << i <<"\n";
+
+					// if (data[i] > 20)
+					// {
+					// 	// j returns the coresponding keypoint
+					// net->SetKeypointColor(j, color_red_test);
+					// }
+					// else if (data[i] < 20 && data[i] >= 10)
+					// {
+					// net->SetKeypointColor(j, color_yellow_test);
+					// }
+					// else
+					// {
+					// net->SetKeypointColor(j, color_green_test);	
+					// }
 				}
 			}
-			
 		}
-			
-		
+
 		// render outputs
 		if( output != NULL )
 		{
-			
+			CUDA(cudaDrawRect(image, 480, 640, TOPL[0][0], TOPL[0][1], BOTR[0][0],BOTR[0][1], make_float4(0,0,255,20)));
+			drawPSA(image);
 			output->Render(image, input->GetWidth(), input->GetHeight());
 
 			// update status bar
