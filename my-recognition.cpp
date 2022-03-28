@@ -52,9 +52,9 @@
 
 // below array is a temprary test replaced with data[]
 
-std::array<std::array<int, 2>, 1> TOPL{ {40, 25 } };
-std::array<std::array<int, 2>, 1> BOTR{ {440, 615} };
-std::array<std::array<int, 2>, 2> PSA{ { { {40, 25} }, { { 440, 615} } } };
+std::array<std::array<int, 2>, 1> TOPL{ {136,12} };
+std::array<std::array<int, 2>, 1> BOTR{ {451,635} };
+std::array<std::array<int, 2>, 2> PSA{ { { {136, 12} }, { { 451, 635} } } };
 int WIDTH = BOTR[0][0] - TOPL[0][0];
 int HEIGHT = BOTR[0][1] - TOPL[0][1];
 
@@ -329,14 +329,7 @@ int main( int argc, char** argv )
     void *z_buff = malloc(sizeof(char) *1);
     unsigned char *z_buff_type;
     // pressure sensor data
-    std::array<unsigned int, 32> data {5,5,5,5,
-									   5,5,5,5,
-									   5,5,5,5,
-									   5,5,5,5,
-									   22,22,22,22,
-									   22,22,22,22,
-									   22,22,22,22,
-									   22,22,22,22};
+    std::array<unsigned int, 32> data;
 
     // place 'w' into the y_buff and same for z_buff
     memcpy(y_buff,&handshake_start,sizeof(unsigned char));
@@ -350,15 +343,15 @@ int main( int argc, char** argv )
 	// Connection to serial port
     char errorOpening = serial.openDevice(SERIAL_PORT, 115200);
     // If connection fails, return the error code otherwise, display a success message
-    // if (errorOpening!=1) 
-	// {
-	// 	std::cout << "error\n";
-	// 	return errorOpening;
-	// }
-	// else
-	// {
-    // 	printf ("Successful connection to %s\n",SERIAL_PORT);
-	// }
+    if (errorOpening!=1) 
+	{
+		std::cout << "error\n";
+		return errorOpening;
+	}
+	else
+	{
+    	printf ("Successful connection to %s\n",SERIAL_PORT);
+	}
     
 	/*
 	 * parse command line
@@ -379,7 +372,9 @@ int main( int argc, char** argv )
 	/*
 	 * create input stream
 	 */
-	// posenet --input-width=640 --input-height=480 --input-flip=counterclockwise csi://0
+	//posenet --input-width=640 --input-height=480 --input-flip=counterclockwise csi://0
+
+	
 	videoOptions camsettings{};
 	camsettings.flipMethod = videoOptions::FlipMethod::FLIP_COUNTERCLOCKWISE;
 	camsettings.height = 480; // for some reason this is the width
@@ -397,7 +392,7 @@ int main( int argc, char** argv )
 	/*
 	 * create output stream
 	 */
-	videoOutput* output = videoOutput::Create(cmdLine, ARG_POSITION(1));
+	videoOutput* output = videoOutput::Create(cmdLine,ARG_POSITION(1));
 	
 	if( !output )
 		LogError("posenet: failed to create output stream\n");	
@@ -454,18 +449,18 @@ int main( int argc, char** argv )
 
 		// gather pressure sensor data
 		//handshake is the char w = ascii = 0x77
-    	// serial.writeBytes(y_buff,1);
-		// serial.readBytes(x_buff,32,10);
-		// x_buff_type = (unsigned char*) x_buff;
+    	serial.writeBytes(y_buff,1);
+		serial.readBytes(x_buff,32,10);
+		x_buff_type = (unsigned char*) x_buff;
 
-		puts("\n Buffer dump:\n");
+		
 
 		// transfer pressure sensor serial datat to a to an array
-    	// for(int y=0; y<(int)sizeof(char)*32; y++ )
-    	// {
-		// 	data[y] = ( *(x_buff_type+y));
-		// 	printf(" %02X",*(x_buff_type+y));
-    	// }
+    	for(int y=0; y<(int)sizeof(char)*32; y++ )
+    	{
+			data[y] = ( *(x_buff_type+y));
+			//printf(" %02X",*(x_buff_type+y));
+    	}
 
 
 		// puts("\n Coord dump:");
@@ -474,15 +469,14 @@ int main( int argc, char** argv )
 		// 	float coord_x = poses[0].Keypoints[0].x;
 		// 	float coord_y = poses[0].Keypoints[0].y;
 		// 	printf("Nose Coord: %4.1f,%4.1f",coord_x,coord_y);
-
 		// }
 
 		puts("\n Array dump:\n");
 		for(int y=0; y<(int)sizeof(char)*32; y++ )
 		{
-			//printf(" %02u",data[y]);
+			printf(" %02u",data[y]);
 		}
-
+		puts("\n");
 		// paint each keypoint a color
 		// color represents pressure
 		// copy to try to avoid a memory fault
@@ -545,7 +539,7 @@ int main( int argc, char** argv )
 
 				if(PointToPressBox(temp_pt,i))
 				{
-					if (data[i] > 20)
+					if (data[i] > 15)
 					{
 						// j returns the coresponding keypoint
 						
