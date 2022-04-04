@@ -546,7 +546,7 @@ int main( int argc, char** argv )
 					net->SetKeypointColor(it->ID, color_red_test);
 					//std::cout << "RED Key: " << j <<" Sense#: " << i <<" Press: " << data[i] <<"\n";
 					}
-					else if (data[i] < 20 && data[i] >= 10)
+					else if (data[i] < 15 && data[i] >= 10)
 					{
 					net->SetKeypointColor(it->ID, color_yellow_test);
 					}
